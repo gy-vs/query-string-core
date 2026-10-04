@@ -1510,3 +1510,266 @@ test('mixed array and object notation', function (t) {
 
     t.end();
 });
+
+test('parseTypes', function (t) {
+    t.test('is disabled by default and never converts values', function (st) {
+        st.deepEqual(qs.parse('page=2&limit=20&active=true&deleted=null'), {
+            page: '2',
+            limit: '20',
+            active: 'true',
+            deleted: 'null'
+        });
+
+        st.deepEqual(qs.parse('a=08&b=-5&c=false', { parseTypes: false }), {
+            a: '08',
+            b: '-5',
+            c: 'false'
+        });
+
+        // truthy, non-true option values do not enable it
+        st.deepEqual(qs.parse('a=1', { parseTypes: 1 }), { a: '1' });
+        st.deepEqual(qs.parse('a=1', { parseTypes: 'true' }), { a: '1' });
+
+        st.end();
+    });
+
+    t.test('restores reversible numbers, booleans and null', function (st) {
+        st.deepEqual(
+            qs.parse('page=2&limit=20&active=true&deleted=null', { parseTypes: true }),
+            { page: 2, limit: 20, active: true, deleted: null }
+        );
+
+        st.deepEqual(qs.parse('a=0&b=-5.5&c=1.25', { parseTypes: true }), {
+            a: 0,
+            b: -5.5,
+            c: 1.25
+        });
+
+        // "-0" stays a string and exponent notation stays a string:
+        // String(Number(...)) canonicalizes them, so the round trip would not match
+        st.deepEqual(qs.parse('a=-0&b=1e3&c=1E2', { parseTypes: true }), {
+            a: '-0',
+            b: '1e3',
+            c: '1E2'
+        });
+
+        st.deepEqual(qs.parse('a=false&b=true&c=null', { parseTypes: true }), {
+            a: false,
+            b: true,
+            c: null
+        });
+
+        st.end();
+    });
+
+    t.test('keeps strings whose round trip through String would not match', function (st) {
+        st.deepEqual(
+            qs.parse('a=08&b=007&c=1.0&d=1_000&e=0x10&f=%202&g=2%20&h=%2B2&i=2.', { parseTypes: true }),
+            { a: '08', b: '007', c: '1.0', d: '1_000', e: '0x10', f: ' 2', g: '2 ', h: '+2', i: '2.' }
+        );
+
+        st.deepEqual(
+            qs.parse('a=99999999999999999999&b=1e999&c=TRUE&d=False&e=NULL&f=&g=abc&h=2-3', { parseTypes: true }),
+            {
+                a: '99999999999999999999',
+                b: '1e999',
+                c: 'TRUE',
+                d: 'False',
+                e: 'NULL',
+                f: '',
+                g: 'abc',
+                h: '2-3'
+            }
+        );
+
+        // "NaN", "Infinity" and "-Infinity" satisfy the round-trip rule
+        var parsed = qs.parse('a=NaN&b=Infinity&c=-Infinity', { parseTypes: true });
+        st.ok(typeof parsed.a === 'number' && Number.isNaN(parsed.a), 'NaN converts to number NaN');
+        st.equal(parsed.b, Infinity, 'Infinity converts to number Infinity');
+        st.equal(parsed.c, -Infinity, '-Infinity converts to number -Infinity');
+
+        st.end();
+    });
+
+    t.test('only acts on values, never on keys', function (st) {
+        st.deepEqual(qs.parse('08=1&true=2&null=3', { parseTypes: true }), { '08': 1, 'true': 2, 'null': 3 });
+        st.deepEqual(qs.parse('a[08]=1', { parseTypes: true }), { a: { '08': 1 } });
+
+        // the existing numeric array-index handling is untouched
+        st.deepEqual(qs.parse('a[0]=1&a[1]=2', { parseTypes: true }), { a: [1, 2] });
+        st.deepEqual(qs.parse('a[00]=1', { parseTypes: true }), { a: { '00': 1 } });
+
+        st.end();
+    });
+
+    t.test('applies to each value in arrays', function (st) {
+        st.deepEqual(qs.parse('a[]=1&a[]=true&a[]=null&a[]=08', { parseTypes: true }), {
+            a: [1, true, null, '08']
+        });
+
+        st.deepEqual(qs.parse('a[0]=1&a[1]=false', { parseTypes: true }), { a: [1, false] });
+
+        st.deepEqual(qs.parse('a=1,true,null,08', { parseTypes: true, comma: true }), {
+            a: [1, true, null, '08']
+        });
+
+        st.deepEqual(qs.parse('a[b][]=2&a[b][]=false', { parseTypes: true }), {
+            a: { b: [2, false] }
+        });
+
+        st.end();
+    });
+
+    t.test('works when duplicates overflow arrayLimit', function (st) {
+        st.deepEqual(
+            qs.parse('a=1&a=2&a=3', { parseTypes: true, arrayLimit: 1 }),
+            { a: { 0: 1, 1: 2, 2: 3 } }
+        );
+
+        st.deepEqual(
+            qs.parse('a=1,2,3', { parseTypes: true, comma: true, arrayLimit: 1 }),
+            { a: { 0: 1, 1: 2, 2: 3 } }
+        );
+
+        // the overflow marker is preserved, so later duplicates keep merging numerically
+        st.deepEqual(
+            qs.parse('a=1&a=2&a=3&a=9', { parseTypes: true, arrayLimit: 1 }),
+            { a: { 0: 1, 1: 2, 2: 3, 3: 9 } }
+        );
+
+        st.end();
+    });
+
+    t.test('does not interfere with strictNullHandling', function (st) {
+        st.deepEqual(qs.parse('a', { parseTypes: true, strictNullHandling: true }), { a: null });
+        st.deepEqual(qs.parse('a&b=null', { parseTypes: true, strictNullHandling: true }), {
+            a: null,
+            b: null
+        });
+
+        // without strictNullHandling a missing value is an empty string and stays one
+        st.deepEqual(qs.parse('a', { parseTypes: true }), { a: '' });
+
+        st.end();
+    });
+
+    t.test('does not interfere with allowEmptyArrays', function (st) {
+        st.deepEqual(qs.parse('a[]=', { parseTypes: true, allowEmptyArrays: true }), { a: [] });
+        st.deepEqual(
+            qs.parse('a[]=null', { parseTypes: true, strictNullHandling: true, allowEmptyArrays: true }),
+            { a: [null] }
+        );
+        st.deepEqual(
+            qs.parse('a[]=null', { parseTypes: true, allowEmptyArrays: true }),
+            { a: [null] }
+        );
+
+        st.end();
+    });
+
+    t.test('judges values returned by a custom decoder', function (st) {
+        var upperCaseValues = function (str, defaultDecoder, charset, type) {
+            var decoded = defaultDecoder(str, defaultDecoder, charset, type);
+            return type === 'value' ? String(decoded).toUpperCase() : decoded;
+        };
+
+        // the decoder's output is what the round-trip rule judges; upper-casing
+        // only rules out mixed-case booleans, digits are still reversible numbers
+        st.deepEqual(qs.parse('a=1&b=true&c=08', { parseTypes: true, decoder: upperCaseValues }), {
+            a: 1,
+            b: 'TRUE',
+            c: '08'
+        });
+
+        // non-string decoder results are preserved as-is, not descended into or re-converted
+        st.deepEqual(
+            qs.parse('a=1', {
+                parseTypes: true,
+                decoder: function (str, defaultDecoder, charset, type) {
+                    return type === 'value' ? { converted: '1' } : defaultDecoder(str, defaultDecoder, charset, type);
+                }
+            }),
+            { a: { converted: '1' } }
+        );
+
+        st.deepEqual(
+            qs.parse('a=1', {
+                parseTypes: true,
+                decoder: function (str, defaultDecoder, charset, type) {
+                    return type === 'value' ? 42 : defaultDecoder(str, defaultDecoder, charset, type);
+                }
+            }),
+            { a: 42 }
+        );
+
+        st.end();
+    });
+
+    t.test('round-trips values through stringify', function (st) {
+        var data = {
+            page: 2,
+            limit: 20,
+            active: true,
+            deleted: null,
+            items: [1, 2, 3],
+            nested: { x: -0.5, y: false }
+        };
+
+        st.deepEqual(
+            qs.parse(qs.stringify(data, { strictNullHandling: true }), {
+                parseTypes: true,
+                strictNullHandling: true
+            }),
+            data
+        );
+
+        st.end();
+    });
+
+    t.test('combines sensibly with the other parse options', function (st) {
+        st.deepEqual(
+            qs.parse('?a.b=1&a.c=true', { parseTypes: true, allowDots: true, ignoreQueryPrefix: true }),
+            { a: { b: 1, c: true } }
+        );
+
+        st.deepEqual(
+            qs.parse('a[b]=1&a[c]=2', { parseTypes: true, plainObjects: true }),
+            {
+                __proto__: null,
+                a: { __proto__: null, b: 1, c: 2 }
+            }
+        );
+
+        st.deepEqual(qs.parse('a=1&a=2', { parseTypes: true, duplicates: 'last' }), { a: 2 });
+        st.deepEqual(qs.parse('a=1&a=2', { parseTypes: true, duplicates: 'first' }), { a: 1 });
+
+        st.deepEqual(
+            qs.parse('a=1&a=2&a=3', { parseTypes: true, parseArrays: false }),
+            { a: [1, 2, 3] }
+        );
+
+        // shape matches the parseArrays:false result with the option off; only leaf types differ
+        st.deepEqual(
+            qs.parse('a=1&a=2&a=3', { parseTypes: false, parseArrays: false }),
+            { a: ['1', '2', '3'] }
+        );
+
+        st.end();
+    });
+
+    t.test('restores values of non-string inputs without mutating them', function (st) {
+        var input = { a: '1', b: ['true', 'null', '08'], c: { d: '-5' } };
+
+        st.deepEqual(qs.parse(input, { parseTypes: true }), {
+            a: 1,
+            b: [true, null, '08'],
+            c: { d: -5 }
+        });
+
+        st.deepEqual(input, { a: '1', b: ['true', 'null', '08'], c: { d: '-5' } }, 'input is not mutated');
+
+        st.end();
+    });
+
+    t.end();
+});
